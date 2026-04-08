@@ -99,7 +99,8 @@ def extract_unique_slides(video_path, threshold=15.0):
 
     count = 0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    progress_bar = st.progress(0, text="🔍 正在使用電腦視覺分析簡報畫面...")
+    st.caption("🔍 正在使用電腦視覺分析簡報畫面...")
+    progress_bar = st.progress(0)
 
     while success:
         success, frame = cap.read()
@@ -111,7 +112,7 @@ def extract_unique_slides(video_path, threshold=15.0):
         # 每隔一段時間更新進度條
         if total_frames > 0 and count % (frame_interval * 5) == 0:
             progress = min(count / total_frames, 1.0)
-            progress_bar.progress(progress, text=f"🔍 分析進度... ({int(progress*100)}%)")
+            progress_bar.progress(progress)
 
         # 略過不需要比對的幀數，節省運算資源
         if count % frame_interval != 0:
@@ -128,7 +129,7 @@ def extract_unique_slides(video_path, threshold=15.0):
             prev_gray = curr_gray # 更新對比基準
 
     cap.release()
-    progress_bar.progress(1.0, text="✅ 畫面分析完成！")
+    progress_bar.progress(1.0)
     return slides_images
 
 def generate_pdf(images):
@@ -199,7 +200,7 @@ if st.button("🚀 開始執行自動化擷取", type="primary"):
                 cols = st.columns(min(len(slides), 3))
                 for i in range(min(len(slides), 3)): # 只預覽前3張避免網頁過長
                     with cols[i]:
-                        st.image(slides[i], caption=f"第 {i+1} 頁", use_column_width=True)
+                        st.image(slides[i], caption=f"第 {i+1} 頁", use_container_width=True)
                 if len(slides) > 3:
                     st.caption(f"（還有 {len(slides) - 3} 張畫面未顯示於預覽中...）")
                 

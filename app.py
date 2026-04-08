@@ -12,7 +12,7 @@ from PIL import Image
 # 核心處理功能區
 # ==========================================
 
-def get_video_stream_url(youtube_url, cookie_file=None):
+def get_video_stream_url(youtube_url):
     """
     使用 yt-dlp 取得可直接串流的影片 URL（不下載檔案）。
     若無法取得，回傳 None。
@@ -36,15 +36,7 @@ def get_video_stream_url(youtube_url, cookie_file=None):
             }
         }
     }
-    if cookie_file:
-        base_opts['cookiefile'] = cookie_file
-
-    # 先嘗試無 cookie，失敗再嘗試帶入常見瀏覽器 cookie（本機可用時）
-    attempts = [
-        {},
-        {'cookiesfrombrowser': ('chrome',)},
-        {'cookiesfrombrowser': ('edge',)}
-    ]
+    attempts = [{}]
 
     last_error = None
     for extra_opts in attempts:
@@ -86,7 +78,7 @@ def get_video_stream_url(youtube_url, cookie_file=None):
 
     return None, (last_error or '無法取得可用串流網址')
 
-def download_video_to_temp(youtube_url, temp_dir, cookie_file=None):
+def download_video_to_temp(youtube_url, temp_dir):
     """下載影片到暫存資料夾，回傳實際檔案路徑。"""
     output_template = os.path.join(temp_dir, "temp_video.%(ext)s")
     ydl_opts = {
@@ -109,8 +101,6 @@ def download_video_to_temp(youtube_url, temp_dir, cookie_file=None):
             }
         }
     }
-    if cookie_file:
-        ydl_opts['cookiefile'] = cookie_file
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([youtube_url])
 
@@ -198,34 +188,20 @@ st.title("📊 YT 簡報自動擷取神器")
 st.markdown("貼上 YouTube 網址，系統會自動辨識影片中的投影片切換，並幫你打包成 **PDF**。")
 
 with st.sidebar:
-    st.header("⚙️ 偵測參數設定")
-    sensitivity = st.slider(
-        "畫面變動閾值 (Threshold)", 
-        min_value=5.0, max_value=50.0, value=15.0, step=1.0,
-        help="數值越小：越容易觸發截圖（適合有小動畫的簡報）；數值越大：只有整頁大翻頁才會截圖。"
-    )
-    st.info("💡 提示：如果抓出來的簡報太多重複頁面，請將閾值「調高」。如果漏掉很多頁，請將閾值「調低」。")
-    cookie_upload = st.file_uploader(
-        "可選：上傳 cookies.txt（受限制影片用）",
-        type=["txt"],
-        accept_multiple_files=False,
-    )
+    st.header("⚙️ 執行模式")
+    st.info("系統會自動用最佳化設定擷取，不需額外參數。")
 
 url_input = st.text_input("🔗 YouTube 影片網址：", placeholder="https://www.youtube.com/watch?v=...")
 
 if st.button("🚀 開始執行自動化擷取", type="primary"):
     if url_input:
         try:
+            sensitivity = 12.0
+
             # 雲端環境以「下載後分析」為主，避免 OpenCV 直接讀取 URL 時失敗
             with tempfile.TemporaryDirectory() as temp_dir:
-                cookie_path = None
-                if cookie_upload is not None:
-                    cookie_path = os.path.join(temp_dir, "cookies.txt")
-                    with open(cookie_path, "wb") as f:
-                        f.write(cookie_upload.getbuffer())
-
                 with st.spinner("📥 正在下載影片..."):
-                    downloaded_video = download_video_to_temp(url_input, temp_dir, cookie_file=cookie_path)
+                    downloaded_video = download_video_to_temp(url_input, temp_dir)
 
                 if not downloaded_video:
                     st.error("❌ 下載完成但找不到影片檔，請稍後再試。")
@@ -268,12 +244,12 @@ if st.button("🚀 開始執行自動化擷取", type="primary"):
                     use_container_width=True
                 )
             else:
-                st.warning("⚠️ 未偵測到可用畫面，請確認影片網址有效，或嘗試調低「波動閾值」。")
+                st.warning("⚠️ 未偵測到可用畫面，請確認影片網址有效，或換另一支公開影片再試。")
                     
         except Exception as e:
             err = str(e)
             if 'HTTP Error 403' in err or 'unable to download video data' in err:
-                st.error("❌ YouTube 拒絕下載（403）。請上傳 cookies.txt 後再試，或改用可公開播放影片。")
+                st.error("❌ YouTube 拒絕下載（403）。此影片可能受限，請改用可公開播放影片再試。")
             else:
                 st.error(f"❌ 程式執行發生錯誤：{err}")
     else:

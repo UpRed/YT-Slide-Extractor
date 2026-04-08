@@ -50,6 +50,16 @@ streamlit run app.py
 
 啟動後在瀏覽器開啟終端機顯示的網址（例如 `http://localhost:8501`）。
 
+## 網頁版（貼網址直接執行）
+
+如果你要使用「貼網址 -> 執行任務 -> 下載 PDF」的完整網頁介面，可啟動 Flask 版本：
+
+```bash
+python web_app.py
+```
+
+然後打開：`http://localhost:5000`
+
 ## 使用方式
 
 1. 貼上 YouTube 影片網址

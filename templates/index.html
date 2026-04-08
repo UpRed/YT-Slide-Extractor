@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YT 簡報擷取器</title>
+  <style>
+    :root {
+      --bg: #f8f7f2;
+      --card: #fffdf8;
+      --ink: #172026;
+      --muted: #5f6b73;
+      --accent: #0f766e;
+      --accent-2: #0b5d56;
+      --line: #e4dfd3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at top right, #e8f7ef, transparent 40%), var(--bg);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    .card {
+      width: min(760px, 96vw);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(13, 28, 34, 0.08);
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.65rem;
+      letter-spacing: 0.3px;
+    }
+    p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+    input[type="url"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      font-size: 1rem;
+      padding: 12px 14px;
+      outline: none;
+      background: #ffffff;
+    }
+    input[type="url"]:focus { border-color: var(--accent); }
+    button {
+      border: 0;
+      border-radius: 12px;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+      padding: 0 16px;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-2); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      background: #fff;
+      display: none;
+    }
+    .bar {
+      height: 10px;
+      background: #edf2f4;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .fill {
+      height: 100%;
+      width: 0;
+      background: linear-gradient(90deg, #16a34a, #0f766e);
+      transition: width 250ms ease;
+    }
+    .actions {
+      margin-top: 14px;
+      display: none;
+      gap: 8px;
+      align-items: center;
+    }
+    .download {
+      text-decoration: none;
+      background: #111827;
+      color: #fff;
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 0.95rem;
+    }
+    .error {
+      color: #b42318;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>YT 簡報擷取器</h1>
+    <p>貼上 YouTube 網址，系統會自動執行擷取並產生 PDF。</p>
+
+    <div class="row">
+      <input id="urlInput" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+      <button id="startBtn">開始</button>
+    </div>
+
+    <section id="statusBox" class="status">
+      <div id="statusText">準備中...</div>
+      <div class="bar"><div id="statusFill" class="fill"></div></div>
+      <div id="statusMeta" style="margin-top: 8px; color: #5f6b73; font-size: 0.95rem;"></div>
+      <div id="actions" class="actions">
+        <a id="downloadBtn" class="download" href="#">下載 PDF</a>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const urlInput = document.getElementById("urlInput");
+    const startBtn = document.getElementById("startBtn");
+    const statusBox = document.getElementById("statusBox");
+    const statusText = document.getElementById("statusText");
+    const statusFill = document.getElementById("statusFill");
+    const statusMeta = document.getElementById("statusMeta");
+    const actions = document.getElementById("actions");
+    const downloadBtn = document.getElementById("downloadBtn");
+
+    let timer = null;
+
+    function setStatus(message, progress, isError = false) {
+      statusBox.style.display = "block";
+      statusText.textContent = message;
+      statusText.className = isError ? "error" : "";
+      statusFill.style.width = `${Math.max(0, Math.min(100, progress || 0))}%`;
+    }
+
+    async function pollTask(taskId) {
+      const res = await fetch(`/api/tasks/${taskId}`);
+      if (!res.ok) throw new Error("查詢任務狀態失敗");
+      const data = await res.json();
+
+      setStatus(data.message, data.progress, data.status === "error");
+      if (data.slideCount > 0) {
+        statusMeta.textContent = `已擷取 ${data.slideCount} 張畫面`;
+      }
+
+      if (data.status === "done") {
+        clearInterval(timer);
+        startBtn.disabled = false;
+        if (data.hasPdf) {
+          downloadBtn.href = `/api/tasks/${taskId}/download`;
+          actions.style.display = "flex";
+        }
+      }
+
+      if (data.status === "error") {
+        clearInterval(timer);
+        startBtn.disabled = false;
+      }
+    }
+
+    startBtn.addEventListener("click", async () => {
+      const url = urlInput.value.trim();
+      if (!url) {
+        setStatus("請先輸入有效的 YouTube 網址", 0, true);
+        return;
+      }
+
+      startBtn.disabled = true;
+      actions.style.display = "none";
+      statusMeta.textContent = "";
+      setStatus("任務建立中...", 5);
+
+      try {
+        const res = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || "建立任務失敗");
+        }
+
+        const data = await res.json();
+        timer = setInterval(() => pollTask(data.taskId), 1200);
+        pollTask(data.taskId);
+      } catch (err) {
+        setStatus(err.message || "發生錯誤", 100, true);
+        startBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

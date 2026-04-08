@@ -12,7 +12,7 @@ from PIL import Image
 # 核心處理功能區
 # ==========================================
 
-def get_video_stream_url(youtube_url):
+def get_video_stream_url(youtube_url, cookie_file=None):
     """
     使用 yt-dlp 取得可直接串流的影片 URL（不下載檔案）。
     若無法取得，回傳 None。
@@ -21,6 +21,11 @@ def get_video_stream_url(youtube_url):
         'format': 'best[ext=mp4]/best',
         'quiet': True,
         'no_warnings': True,
+        'noplaylist': True,
+        'retries': 10,
+        'fragment_retries': 10,
+        'socket_timeout': 30,
+        'force_ipv4': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             'Referer': 'https://www.youtube.com/'
@@ -31,6 +36,8 @@ def get_video_stream_url(youtube_url):
             }
         }
     }
+    if cookie_file:
+        base_opts['cookiefile'] = cookie_file
 
     # 先嘗試無 cookie，失敗再嘗試帶入常見瀏覽器 cookie（本機可用時）
     attempts = [
@@ -79,7 +86,7 @@ def get_video_stream_url(youtube_url):
 
     return None, (last_error or '無法取得可用串流網址')
 
-def download_video_to_temp(youtube_url, temp_dir):
+def download_video_to_temp(youtube_url, temp_dir, cookie_file=None):
     """下載影片到暫存資料夾，回傳實際檔案路徑。"""
     output_template = os.path.join(temp_dir, "temp_video.%(ext)s")
     ydl_opts = {
@@ -88,7 +95,22 @@ def download_video_to_temp(youtube_url, temp_dir):
         'quiet': True,
         'no_warnings': True,
         'noplaylist': True,
+        'retries': 10,
+        'fragment_retries': 10,
+        'socket_timeout': 30,
+        'force_ipv4': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Referer': 'https://www.youtube.com/'
+        },
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
     }
+    if cookie_file:
+        ydl_opts['cookiefile'] = cookie_file
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([youtube_url])
 
@@ -183,42 +205,42 @@ with st.sidebar:
         help="數值越小：越容易觸發截圖（適合有小動畫的簡報）；數值越大：只有整頁大翻頁才會截圖。"
     )
     st.info("💡 提示：如果抓出來的簡報太多重複頁面，請將閾值「調高」。如果漏掉很多頁，請將閾值「調低」。")
+    cookie_upload = st.file_uploader(
+        "可選：上傳 cookies.txt（受限制影片用）",
+        type=["txt"],
+        accept_multiple_files=False,
+    )
 
 url_input = st.text_input("🔗 YouTube 影片網址：", placeholder="https://www.youtube.com/watch?v=...")
 
 if st.button("🚀 開始執行自動化擷取", type="primary"):
     if url_input:
         try:
-            # 只走串流流程，不下載整片影片
-            with st.spinner("🔗 正在取得可串流的影片網址..."):
-                stream_url, stream_error = get_video_stream_url(url_input)
+            # 雲端環境以「下載後分析」為主，避免 OpenCV 直接讀取 URL 時失敗
+            with tempfile.TemporaryDirectory() as temp_dir:
+                cookie_path = None
+                if cookie_upload is not None:
+                    cookie_path = os.path.join(temp_dir, "cookies.txt")
+                    with open(cookie_path, "wb") as f:
+                        f.write(cookie_upload.getbuffer())
 
-            if not stream_url:
-                st.error(f"❌ 無法取得可用串流網址：{stream_error}")
-                st.info("💡 可能是影片受限（年齡/地區/登入），可嘗試改用可公開播放的影片網址。")
-                st.stop()
+                with st.spinner("📥 正在下載影片..."):
+                    downloaded_video = download_video_to_temp(url_input, temp_dir, cookie_file=cookie_path)
 
-            with st.spinner("🔍 正在串流解析簡報畫面..."):
-                slides = extract_unique_slides(stream_url, threshold=sensitivity)
+                if not downloaded_video:
+                    st.error("❌ 下載完成但找不到影片檔，請稍後再試。")
+                    st.stop()
 
-            # 若僅抓到單張畫面，代表未偵測到明顯切頁，嘗試自動降閾值重跑一次
-            if len(slides) <= 1 and sensitivity > 5.0:
-                retry_threshold = max(5.0, round(sensitivity * 0.6, 1))
-                with st.spinner(f"🔁 首輪擷取較少，改用較低閾值 {retry_threshold} 再試一次..."):
-                    retry_slides = extract_unique_slides(stream_url, threshold=retry_threshold)
-                if len(retry_slides) > len(slides):
-                    slides = retry_slides
+                with st.spinner("🔍 正在分析下載後影片..."):
+                    slides = extract_unique_slides(downloaded_video, threshold=sensitivity)
 
-            # 串流仍抓不到有效畫面時，改用暫存下載流程做備援
-            if len(slides) <= 1:
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    with st.spinner("📥 串流偵測不足，改用下載模式重試..."):
-                        downloaded_video = download_video_to_temp(url_input, temp_dir)
-                    if downloaded_video:
-                        with st.spinner("🔍 正在分析下載後影片..."):
-                            download_slides = extract_unique_slides(downloaded_video, threshold=sensitivity)
-                        if len(download_slides) > len(slides):
-                            slides = download_slides
+                # 若僅抓到單張畫面，代表未偵測到明顯切頁，嘗試自動降閾值重跑一次
+                if len(slides) <= 1 and sensitivity > 5.0:
+                    retry_threshold = max(5.0, round(sensitivity * 0.6, 1))
+                    with st.spinner(f"🔁 首輪擷取較少，改用較低閾值 {retry_threshold} 再試一次..."):
+                        retry_slides = extract_unique_slides(downloaded_video, threshold=retry_threshold)
+                    if len(retry_slides) > len(slides):
+                        slides = retry_slides
                 
             if slides:
                 if len(slides) <= 1:
@@ -249,6 +271,10 @@ if st.button("🚀 開始執行自動化擷取", type="primary"):
                 st.warning("⚠️ 未偵測到可用畫面，請確認影片網址有效，或嘗試調低「波動閾值」。")
                     
         except Exception as e:
-            st.error(f"❌ 程式執行發生錯誤：{str(e)}")
+            err = str(e)
+            if 'HTTP Error 403' in err or 'unable to download video data' in err:
+                st.error("❌ YouTube 拒絕下載（403）。請上傳 cookies.txt 後再試，或改用可公開播放影片。")
+            else:
+                st.error(f"❌ 程式執行發生錯誤：{err}")
     else:
         st.error("⚠️ 請先輸入有效的 YouTube 網址！")

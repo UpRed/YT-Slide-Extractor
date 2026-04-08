@@ -3,6 +3,9 @@ import cv2
 import numpy as np
 import yt_dlp
 import io
+import os
+import glob
+import tempfile
 from PIL import Image
 
 # ==========================================
@@ -75,6 +78,32 @@ def get_video_stream_url(youtube_url):
         return selected.get('url'), None
 
     return None, (last_error or '無法取得可用串流網址')
+
+def download_video_to_temp(youtube_url, temp_dir):
+    """下載影片到暫存資料夾，回傳實際檔案路徑。"""
+    output_template = os.path.join(temp_dir, "temp_video.%(ext)s")
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': output_template,
+        'quiet': True,
+        'no_warnings': True,
+        'noplaylist': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        ydl.download([youtube_url])
+
+    # 下載後實際副檔名不一定，掃描常見格式
+    patterns = [
+        os.path.join(temp_dir, 'temp_video.*'),
+        os.path.join(temp_dir, '*.mp4'),
+        os.path.join(temp_dir, '*.mkv'),
+        os.path.join(temp_dir, '*.webm'),
+    ]
+    for pattern in patterns:
+        files = sorted(glob.glob(pattern))
+        if files:
+            return files[0]
+    return None
 
 def extract_unique_slides(video_path, threshold=15.0):
     """
@@ -179,6 +208,17 @@ if st.button("🚀 開始執行自動化擷取", type="primary"):
                     retry_slides = extract_unique_slides(stream_url, threshold=retry_threshold)
                 if len(retry_slides) > len(slides):
                     slides = retry_slides
+
+            # 串流仍抓不到有效畫面時，改用暫存下載流程做備援
+            if len(slides) <= 1:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    with st.spinner("📥 串流偵測不足，改用下載模式重試..."):
+                        downloaded_video = download_video_to_temp(url_input, temp_dir)
+                    if downloaded_video:
+                        with st.spinner("🔍 正在分析下載後影片..."):
+                            download_slides = extract_unique_slides(downloaded_video, threshold=sensitivity)
+                        if len(download_slides) > len(slides):
+                            slides = download_slides
                 
             if slides:
                 if len(slides) <= 1:

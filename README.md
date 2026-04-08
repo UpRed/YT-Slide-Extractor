@@ -60,6 +60,24 @@ python web_app.py
 
 然後打開：`http://localhost:5000`
 
+## 部署固定公開網址（Render）
+
+本專案已內建 `render.yaml`，可直接用 Render 建立固定公開網址。
+
+### 一鍵部署
+
+打開以下連結並登入 Render：
+
+`https://render.com/deploy?repo=https://github.com/UpRed/YT-Slide-Extractor`
+
+### 手動重點
+
+- Service 類型：`Web Service`
+- Build Command：`pip install -r requirements.txt`
+- Start Command：`gunicorn web_app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120`
+
+部署完成後，Render 會提供固定網址（例如 `https://xxx.onrender.com`）。
+
 ## 使用方式
 
 1. 貼上 YouTube 影片網址

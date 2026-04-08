@@ -2,6 +2,10 @@
 
 把 YouTube 影片中的簡報頁面自動擷取成圖片，並匯出為 PDF。
 
+## 線上體驗
+
+- https://yt-slide-extractor-kxnvssda6xezarl2gpvbxv.streamlit.app/
+
 ## 功能
 
 - 貼上 YouTube 網址即可開始擷取

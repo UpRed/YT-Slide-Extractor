@@ -81,7 +81,7 @@ def get_video_stream_url(youtube_url):
 def download_video_to_temp(youtube_url, temp_dir):
     """下載影片到暫存資料夾，回傳實際檔案路徑。"""
     output_template = os.path.join(temp_dir, "temp_video.%(ext)s")
-    ydl_opts = {
+    base_opts = {
         'format': 'best[ext=mp4]/best',
         'outtmpl': output_template,
         'quiet': True,
@@ -90,19 +90,40 @@ def download_video_to_temp(youtube_url, temp_dir):
         'retries': 10,
         'fragment_retries': 10,
         'socket_timeout': 30,
-        'force_ipv4': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
             'Referer': 'https://www.youtube.com/'
         },
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web']
-            }
-        }
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([youtube_url])
+
+    # 不同雲端出口對 YouTube 會有不同行為，依序嘗試多組策略
+    strategies = [
+        {
+            'force_ipv4': True,
+            'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        },
+        {
+            'force_ipv4': False,
+            'extractor_args': {'youtube': {'player_client': ['tv', 'web']}},
+        },
+        {
+            'force_ipv4': True,
+            'extractor_args': {'youtube': {'player_client': ['web_creator', 'android']}},
+        },
+    ]
+
+    last_error = None
+    for extra in strategies:
+        opts = {**base_opts, **extra}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([youtube_url])
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+    else:
+        raise RuntimeError(last_error or '下載失敗')
 
     # 下載後實際副檔名不一定，掃描常見格式
     patterns = [
@@ -249,7 +270,7 @@ if st.button("🚀 開始執行自動化擷取", type="primary"):
         except Exception as e:
             err = str(e)
             if 'HTTP Error 403' in err or 'unable to download video data' in err:
-                st.error("❌ YouTube 拒絕下載（403）。此影片可能受限，請改用可公開播放影片再試。")
+                st.error("❌ YouTube 拒絕下載（403）。此狀況即使公開影片也可能發生（雲端 IP 被限制）。請換影片或改在本機執行。")
             else:
                 st.error(f"❌ 程式執行發生錯誤：{err}")
     else:

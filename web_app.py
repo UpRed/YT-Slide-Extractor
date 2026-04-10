@@ -4,6 +4,7 @@ import os
 import tempfile
 import threading
 import uuid
+import base64
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
@@ -18,8 +19,8 @@ TASKS = {}
 TASK_LOCK = threading.Lock()
 
 
-def _build_ydl_opts(output_template):
-    return {
+def _build_ydl_opts(output_template, cookie_file=None, force_ipv4=True, player_clients=None):
+    opts = {
         "format": "best[ext=mp4]/best",
         "outtmpl": output_template,
         "quiet": True,
@@ -28,7 +29,7 @@ def _build_ydl_opts(output_template):
         "retries": 10,
         "fragment_retries": 10,
         "socket_timeout": 30,
-        "force_ipv4": True,
+        "force_ipv4": force_ipv4,
         "http_headers": {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -39,10 +40,43 @@ def _build_ydl_opts(output_template):
         },
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "web"],
+                "player_client": player_clients or ["android", "web"],
             }
         },
     }
+    if cookie_file and os.path.exists(cookie_file):
+        opts["cookiefile"] = cookie_file
+    return opts
+
+
+def _write_cookie_file_from_env(temp_dir):
+    """
+    支援兩種 Render 環境變數：
+    - YTDLP_COOKIES_B64: cookies.txt 的 base64 內容
+    - YTDLP_COOKIES_TXT: cookies.txt 原始內容
+    """
+    cookie_path = os.path.join(temp_dir, "cookies.txt")
+
+    b64_text = os.getenv("YTDLP_COOKIES_B64", "").strip()
+    raw_text = os.getenv("YTDLP_COOKIES_TXT", "").strip()
+
+    try:
+        if b64_text:
+            decoded = base64.b64decode(b64_text).decode("utf-8", errors="ignore")
+            with open(cookie_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(decoded)
+            return cookie_path
+
+        if raw_text:
+            # 允許使用者在環境變數內用 \n 表示換行
+            normalized = raw_text.replace("\\n", "\n")
+            with open(cookie_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(normalized)
+            return cookie_path
+    except Exception:
+        return None
+
+    return None
 
 
 def _find_downloaded_video(temp_dir):
@@ -124,9 +158,33 @@ def _process_task(task_id, youtube_url):
         _set_task(task_id, status="running", message="正在下載影片...", progress=10)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            ydl_opts = _build_ydl_opts(os.path.join(temp_dir, "temp_video.%(ext)s"))
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([youtube_url])
+            cookie_file = _write_cookie_file_from_env(temp_dir)
+            outtmpl = os.path.join(temp_dir, "temp_video.%(ext)s")
+
+            strategies = [
+                {"force_ipv4": True, "player_clients": ["android", "web"]},
+                {"force_ipv4": False, "player_clients": ["tv", "web"]},
+                {"force_ipv4": True, "player_clients": ["web_creator", "android"]},
+            ]
+
+            last_error = None
+            for strategy in strategies:
+                ydl_opts = _build_ydl_opts(
+                    outtmpl,
+                    cookie_file=cookie_file,
+                    force_ipv4=strategy["force_ipv4"],
+                    player_clients=strategy["player_clients"],
+                )
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([youtube_url])
+                    last_error = None
+                    break
+                except Exception as exc:
+                    last_error = str(exc)
+
+            if last_error:
+                raise RuntimeError(last_error)
 
             video_path = _find_downloaded_video(temp_dir)
             if not video_path:
@@ -159,8 +217,16 @@ def _process_task(task_id, youtube_url):
             )
     except Exception as exc:
         err = str(exc)
-        if "HTTP Error 403" in err or "unable to download video data" in err:
-            err = "YouTube 拒絕下載（403）。這通常是來源限制，請改用可公開播放的影片。"
+        if (
+            "HTTP Error 403" in err
+            or "unable to download video data" in err
+            or "Sign in to confirm you\u2019re not a bot" in err
+            or "Sign in to confirm you're not a bot" in err
+        ):
+            err = (
+                "YouTube 觸發反機器人驗證。若在 Render 部署，請到 Environment 新增 "
+                "YTDLP_COOKIES_B64（cookies.txt 的 base64）後重新部署。"
+            )
         _set_task(task_id, status="error", message=err, progress=100)
 
 

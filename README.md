@@ -76,6 +76,20 @@ python web_app.py
 - Build Command：`pip install -r requirements.txt`
 - Start Command：`gunicorn web_app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120`
 
+### Render 重要環境變數（解決 YouTube bot 驗證）
+
+在 Render 的 `Environment` 新增：
+
+- `YTDLP_COOKIES_B64`：將 `cookies.txt` 內容轉成 base64 後貼上
+
+Windows 產生 base64 範例：
+
+```powershell
+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Get-Content .\cookies.txt -Raw)))
+```
+
+把輸出的字串貼到 Render `YTDLP_COOKIES_B64`，再按 `Manual Deploy -> Deploy latest commit`。
+
 部署完成後，Render 會提供固定網址（例如 `https://xxx.onrender.com`）。
 
 ## 使用方式
@@ -92,6 +106,7 @@ python web_app.py
 - 影片可能有年齡、地區或登入限制
 - 先確認影片可公開播放
 - 可嘗試更新 `yt-dlp`
+- 雲端部署（Render）建議設定 `YTDLP_COOKIES_B64`，避免 `Sign in to confirm you’re not a bot`
 
 ```bash
 pip install -U yt-dlp
